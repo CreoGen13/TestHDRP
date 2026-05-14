@@ -1,0 +1,18 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1f18ae2cdf1c48ec82a31da3e58bb75a, type: 3}
+  m_Name: DefaultSwingLeft3
+  m_EditorClassIdentifier: Assembly-CSharp::AnimationPairsSearchSystem.PreparedAnimationClip
+  animationType: 0
+  clip: {fileID: -9006171576137154599, guid: 18a701b4849ff3047b2ff754f7d06c1c, type: 3}
+  blendStartTime: 0.5
+  blendEndTime: 1
