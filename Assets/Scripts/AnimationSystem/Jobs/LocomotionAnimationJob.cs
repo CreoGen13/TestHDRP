@@ -7,25 +7,43 @@ namespace AnimationSystem.Jobs
     {
         public LocomotionAnimationJobConfig Config;
             
-        public float StepWeight;
+        public float RightFootStepWeight;
+        public float LeftFootStepWeight;
         
-        public Quaternion FootRotation;
-        public Vector3 FootStartPosition;
-        public Vector3 FootEndPosition;
+        public Quaternion RightFootRotation;
+        public Vector3 RightFootStartPosition;
+        public Vector3 RightFootEndPosition;
+        
+        public Quaternion LeftFootRotation;
+        public Vector3 LeftFootStartPosition;
+        public Vector3 LeftFootEndPosition;
         
         public TransformStreamHandle RightFootTarget;
+        public TransformStreamHandle LeftFootTarget;
         
         public void ProcessAnimation(AnimationStream stream)
         {
-            var sinWeight = Mathf.Sin(StepWeight * Mathf.PI);
-            var additionHeight = new Vector3(0, sinWeight * Config.StepHeight, 0);
-            var position = Vector3.Lerp(FootStartPosition, FootEndPosition, StepWeight);
-            var finalPosition = position +  additionHeight;
+            var rightFootSinWeight = Mathf.Sin(RightFootStepWeight * Mathf.PI);
+            var rightFootAdditionHeight = new Vector3(0, rightFootSinWeight * Config.StepHeight, 0);
+            var rightFootPosition = Vector3.Lerp(RightFootStartPosition, RightFootEndPosition, RightFootStepWeight);
+            var rightFootFinalPosition = rightFootPosition +  rightFootAdditionHeight;
             
             RightFootTarget.SetGlobalTR(
                 stream,
-                finalPosition,
-                FootRotation,
+                rightFootFinalPosition,
+                RightFootRotation,
+                // Vector3.one,
+                false);
+            
+            var leftFootSinWeight = Mathf.Sin(LeftFootStepWeight * Mathf.PI);
+            var leftFootAdditionHeight = new Vector3(0, leftFootSinWeight * Config.StepHeight, 0);
+            var leftFootPosition = Vector3.Lerp(LeftFootStartPosition, LeftFootEndPosition, LeftFootStepWeight);
+            var leftFootFinalPosition = leftFootPosition +  leftFootAdditionHeight;
+            
+            LeftFootTarget.SetGlobalTR(
+                stream,
+                leftFootFinalPosition,
+                LeftFootRotation,
                 // Vector3.one,
                 false);
         }

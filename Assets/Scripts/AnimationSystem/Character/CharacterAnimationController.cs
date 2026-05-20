@@ -1,4 +1,5 @@
-﻿using AnimationPairsSearchSystem;
+﻿using AnimationBalanceSystem;
+using AnimationPairsSearchSystem;
 using AnimationSystem.Jobs;
 using Infrastructure.Interfaces;
 using Sirenix.OdinInspector;
@@ -16,7 +17,10 @@ namespace AnimationSystem.Character
         IDestroyable
     {
         private const int LOCOMOTION_IDLE_ANIMATION_INDEX = 0;
-        private const int LOCOMOTION_STEP_FORWARD_ANIMATION_INDEX = 1;
+        private const int LOCOMOTION_STEP_FORWARD_RIGHT_ANIMATION_INDEX = 1;
+        private const int LOCOMOTION_STEP_FORWARD_LEFT_ANIMATION_INDEX = 2;
+        private const int LOCOMOTION_STEP_BACKWARD_RIGHT_ANIMATION_INDEX = 3;
+        private const int LOCOMOTION_STEP_BACKWARD_LEFT_ANIMATION_INDEX = 4;
         
         private const int POLEARM_IDLE_ANIMATION_INDEX = 0;
         private const int POLEARM_SWING_ANIMATION_INDEX = 1;
@@ -28,6 +32,8 @@ namespace AnimationSystem.Character
         [Header("References")]
         [SerializeField] private Animator animator;
         [SerializeField] private RigBuilder rigBuilder;
+        [SerializeField] private RootMotionHandlerView motionHandler;
+        [SerializeField] private CenterOfMassView centerOfMass;
         
         [Header("Strike Clips")]
         [SerializeField] private AnimationClip polearmIdleClip;
@@ -36,12 +42,19 @@ namespace AnimationSystem.Character
         
         [Header("Locomotion Clips")]
         [SerializeField] private AnimationClip locomotionIdleClip;
-        [SerializeField] private AnimationClip locomotionStepForwardClip;
+        
+        [SerializeField] private AnimationClip locomotionStepForwardRightClip;
+        [SerializeField] private AnimationClip locomotionStepForwardLeftClip;
+        [SerializeField] private AnimationClip locomotionStepBackwardRightClip;
+        [SerializeField] private AnimationClip locomotionStepBackwardLeftClip;
+        
         [SerializeField] private AvatarMask locomotionAvatarMask;
 
         [Header("Settings")]
         [Range(0f, 1f)]
         [SerializeField] private float idleToSwingBlendTime;
+        [Range(0f, 1f)]
+        [SerializeField] private float strikeToIdleBlendTime;
         [Range(0f, 1f)]
         [SerializeField] private float swingToIdleBlendTime;
         [Range(0f, 1f)]
@@ -77,6 +90,9 @@ namespace AnimationSystem.Character
         
         [SerializeField] private Transform rightFootBone;
         [SerializeField] private Transform rightFootTarget;
+        
+        [SerializeField] private Transform leftFootBone;
+        [SerializeField] private Transform leftFootTarget;
 
         [SerializeField] private ChainIKConstraint rightFootIK;
         
@@ -85,7 +101,10 @@ namespace AnimationSystem.Character
         [SerializeField] private Transform samplerStrikePivotBone;
         [SerializeField] private Transform samplerShouldersBone;
         [SerializeField] private Transform samplerRightFootBone;
+        [SerializeField] private Transform samplerLeftFootBone;
+        
         [SerializeField] private Animator samplerAnimator;
+        [SerializeField] private RootMotionHandlerView samplerMotionHandler;
 
         private float StrikeAnimationTime => idleToSwingBlendTime +
                                              polearmSwingStrikePair.SwingLength +
@@ -98,7 +117,10 @@ namespace AnimationSystem.Character
         private AnimationMixerPlayable _polearmMixer;
         private AnimationMixerPlayable _locomotionMixer;
         private AnimationClipPlayable _locomotionIdleClipPlayable;
-        private AnimationClipPlayable _locomotionStepForwardClipPlayable;
+        private AnimationClipPlayable _locomotionStepForwardRightClipPlayable;
+        private AnimationClipPlayable _locomotionStepForwardLeftClipPlayable;
+        private AnimationClipPlayable _locomotionStepBackwardRightClipPlayable;
+        private AnimationClipPlayable _locomotionStepBackwardLeftClipPlayable;
         private AnimationClipPlayable _polearmIdleClipPlayable;
         private AnimationClipPlayable _polearmSwingClipPlayable;
         private AnimationClipPlayable _polearmStrikeClipPlayable;
@@ -114,8 +136,8 @@ namespace AnimationSystem.Character
         private AnimationClipPlayable _samplePolearmIdleClipPlayable;
         private AnimationClipPlayable _samplePolearmStrikeClipPlayable;
 
-        private CharacterPolearmAnimationState polearmAnimationState;
-        private CharacterLocomotionAnimationState locomotionAnimationState;
+        private CharacterPolearmAnimationState _polearmAnimationState;
+        private CharacterLocomotionAnimationState _locomotionAnimationState;
         
         private float _locomotionBlendPassedTime;
         
@@ -129,12 +151,17 @@ namespace AnimationSystem.Character
 
         private bool _useHands;
         private bool _useStep;
+        private bool _isCurrentFootRight;
+        private int _steps;
+        
+        private Vector3 _defaultSamplerPosition;
 
         [Button]
         private void PlayStrike()
         {
             _isStepPlaying = false;
             _polearmPassedTime = 0;
+            _polearmBlendPassedTime = 0;
             _polearmMoveHandsPassedTime = 0;
             _polearmSwingClipPlayable.SetSpeed(0);
             _polearmSwingClipPlayable.SetTime(0);
@@ -155,7 +182,6 @@ namespace AnimationSystem.Character
             var deltaDist = targetDist - currentDist;
             _useStep = deltaDist >= minStepLength;
             _stepLength = Mathf.Clamp(deltaDist, minStepLength, maxStepLength);
-            var handsDist = Mathf.Clamp(targetDist - _stepLength, currentDist, targetDist);
 
             if (_useStep)
             {
@@ -184,30 +210,76 @@ namespace AnimationSystem.Character
                 CharacterPolearmAnimationState.MoveHands :
                 CharacterPolearmAnimationState.IdleToSwing);
         }
+        
 
-        private void PlayStep()
+        private void PlayStepForward()
         {
+            motionHandler.ChangeAnimation();
+            
+            _locomotionStepForwardRightClipPlayable.SetSpeed(0);
+            _locomotionStepForwardLeftClipPlayable.SetSpeed(0);
+            _locomotionStepBackwardRightClipPlayable.SetSpeed(0);
+            _locomotionStepBackwardLeftClipPlayable.SetSpeed(0);
+
+            _steps++;
             _isStepPlaying = true;
-            _locomotionStepForwardClipPlayable.SetTime(0);
-            _locomotionStepForwardClipPlayable.SetSpeed(1);
+            _locomotionStepForwardRightClipPlayable.SetTime(0);
+            _locomotionStepForwardRightClipPlayable.SetSpeed(1);
             SetLocomotionJobStepWeight(0);
 
             var startPosition = rightFootBone.position;
             var endPosition = rightFootBone.position + new Vector3(0, 0, _stepLength);
                 
             var locomotionJob = _locomotionAnimationPlayable.GetJobData<LocomotionAnimationJob>();
-            locomotionJob.FootStartPosition = startPosition;
-            locomotionJob.FootEndPosition = endPosition;
+            locomotionJob.RightFootStartPosition = startPosition;
+            locomotionJob.RightFootEndPosition = endPosition;
             _locomotionAnimationPlayable.SetJobData(locomotionJob);
             
-            ChangeLocomotionState(CharacterLocomotionAnimationState.StepForward);
+            ChangeLocomotionState(CharacterLocomotionAnimationState.StepForwardRight);
+        }
+        [Button]
+        private void PlaySwingToIdleWithStep()
+        {
+            motionHandler.ChangeAnimation();
+            
+            _locomotionStepForwardRightClipPlayable.SetSpeed(0);
+            _locomotionStepForwardLeftClipPlayable.SetSpeed(0);
+            _locomotionStepBackwardRightClipPlayable.SetSpeed(0);
+            _locomotionStepBackwardLeftClipPlayable.SetSpeed(0);
+            
+            _steps--;
+            _isStepPlaying = true;
+            _polearmBlendPassedTime = 0;
+            _locomotionStepBackwardLeftClipPlayable.SetTime(0);
+            _locomotionStepBackwardLeftClipPlayable.SetSpeed(1);
+            _polearmSwingClipPlayable.SetSpeed(0);
+            SetLocomotionJobStepWeight(0);
+            
+            var startPosition = leftFootBone.position;
+            var endPosition = leftFootBone.position + new Vector3(0, 0, -maxStepLength);
+                
+            var locomotionJob = _locomotionAnimationPlayable.GetJobData<LocomotionAnimationJob>();
+            locomotionJob.LeftFootStartPosition = startPosition;
+            locomotionJob.LeftFootEndPosition = endPosition;
+            _locomotionAnimationPlayable.SetJobData(locomotionJob);
+            
+            ChangePolearmState(CharacterPolearmAnimationState.SwingToIdle);
+            ChangeLocomotionState(CharacterLocomotionAnimationState.StepBackwardLeft);
         }
         private void PlayStepToIdle()
         {
-            _locomotionStepForwardClipPlayable.SetTime(locomotionStepForwardClip.length);
-            _locomotionStepForwardClipPlayable.SetSpeed(-1);
+            motionHandler.ChangeAnimation();
+            
+            _locomotionStepForwardRightClipPlayable.SetSpeed(0);
+            _locomotionStepForwardLeftClipPlayable.SetSpeed(0);
+            _locomotionStepBackwardRightClipPlayable.SetSpeed(0);
+            _locomotionStepBackwardLeftClipPlayable.SetSpeed(0);
+            
+            var stepInfo = GetStepToIdleInfo();
+            stepInfo.clipPlayable.SetTime(0);
+            stepInfo.clipPlayable.SetSpeed(1);
             SetLocomotionJobStepWeight(1);
-                        
+            
             ChangeLocomotionState(CharacterLocomotionAnimationState.StepToIdle);
         }
         
@@ -223,16 +295,34 @@ namespace AnimationSystem.Character
         {
             UpdateStrikeAnimation();
 
+            // if (_polearmAnimationState is
+            //         CharacterPolearmAnimationState.IdleToSwing or
+            //         CharacterPolearmAnimationState.Swing &&
+            //     !centerOfMass.IsCenterOfMassInsideSupportArea())
+            // {
+            //     PlaySwingToIdleWithStep();
+            // }
+            //
+            // if (_locomotionAnimationState == CharacterLocomotionAnimationState.StepBackwardLeft &&
+            //     _locomotionBlendPassedTime >= _locomotionStepBackwardLeftClipPlayable.GetAnimationClip().length)
+            // {
+            //     PlayStepToIdle();
+            // }
+
             if (_useStep &&
                 !_isStepPlaying &&
-                StrikeAnimationTime - _polearmPassedTime - stepStartTimeOffset <= locomotionStepForwardClip.length)
+                // _polearmAnimationState is
+                //     CharacterPolearmAnimationState.SwingToStrike or
+                //     CharacterPolearmAnimationState.Strike &&
+                StrikeAnimationTime - _polearmPassedTime - stepStartTimeOffset <= _locomotionStepForwardRightClipPlayable.GetAnimationClip().length)
             {
-                PlayStep();
+                PlayStepForward();
             }
 
-            if (polearmAnimationState == CharacterPolearmAnimationState.StrikeToIdle &&
+            if (Mathf.Abs(_steps) % 2 == 1 &&
+                _polearmAnimationState == CharacterPolearmAnimationState.StrikeToIdle &&
                 _polearmStrikeClipPlayable.GetTime() >= polearmSwingStrikePair.StrikeLength &&
-                _locomotionBlendPassedTime >= locomotionStepForwardClip.length)
+                _locomotionBlendPassedTime >= _locomotionStepForwardRightClipPlayable.GetAnimationClip().length)
             {
                 PlayStepToIdle();
             }
@@ -242,7 +332,7 @@ namespace AnimationSystem.Character
 
         private void UpdateStrikeAnimation()
         {
-            switch (polearmAnimationState)
+            switch (_polearmAnimationState)
             {
                 case CharacterPolearmAnimationState.Idle:
                 {
@@ -263,10 +353,12 @@ namespace AnimationSystem.Character
                     
                     if (_polearmMoveHandsPassedTime >= maxTime)
                     {
+                        _polearmBlendPassedTime = 0;
                         _polearmSwingClipPlayable.SetTime(0);
                         _polearmSwingClipPlayable.SetSpeed(0);
                         
                         SetPolearmJobMovingHandsWeight(1, 0);
+                        
                         ChangePolearmState(CharacterPolearmAnimationState.IdleToSwing);
                     }
                     
@@ -277,9 +369,12 @@ namespace AnimationSystem.Character
                     var deltaWeight = Mathf.Clamp01(_polearmBlendPassedTime / idleToSwingBlendTime);
 
                     SetPolearmAnimationWeights(1f - deltaWeight, deltaWeight, 0);
+                    
+                    _polearmBlendPassedTime += Time.deltaTime;
 
                     if (deltaWeight >= 1f)
                     {
+                        _polearmBlendPassedTime = 0;
                         _polearmSwingClipPlayable.SetSpeed(1);
                         
                         ChangePolearmState(CharacterPolearmAnimationState.Swing);
@@ -289,8 +384,11 @@ namespace AnimationSystem.Character
                 }
                 case CharacterPolearmAnimationState.Swing:
                 {
+                    _polearmBlendPassedTime += Time.deltaTime;
+                    
                     if (_polearmSwingClipPlayable.GetTime() >= polearmSwingStrikePair.SwingLength)
                     {
+                        _polearmBlendPassedTime = 0;
                         _polearmStrikePassedTime = 0;
                         _polearmStrikeClipPlayable.SetTime(polearmSwingStrikePair.StrikeStartTime);
                         _polearmStrikeClipPlayable.SetSpeed(0);
@@ -305,10 +403,14 @@ namespace AnimationSystem.Character
                     var deltaWeight = Mathf.Clamp01(_polearmBlendPassedTime / polearmSwingStrikePair.BlendTime);
 
                     SetPolearmAnimationWeights(0, 1f - deltaWeight, deltaWeight);
+                        
+                    _polearmBlendPassedTime += Time.deltaTime;
                     
                     if (deltaWeight >= 1f)
                     {
+                        _polearmBlendPassedTime = 0;
                         _polearmStrikeClipPlayable.SetSpeed(1);
+                        
                         SetPolearmJobHitTargetWeight(0);
 
                         ChangePolearmState(CharacterPolearmAnimationState.Strike);
@@ -321,10 +423,12 @@ namespace AnimationSystem.Character
                     SetPolearmJobHitTargetWeight(_polearmStrikePassedTime / polearmSwingStrikePair.StrikeLength);
                     
                     _polearmStrikePassedTime += Time.deltaTime;
+                    _polearmBlendPassedTime += Time.deltaTime;
                     
                     if (_polearmStrikeClipPlayable.GetTime() >= polearmSwingStrikePair.StrikeLength)
                     {
-                        _polearmStrikePassedTime = swingToIdleBlendTime;
+                        _polearmBlendPassedTime = 0;
+                        _polearmStrikePassedTime = strikeToIdleBlendTime;
                         _polearmIdleClipPlayable.SetTime(0);
                         _polearmIdleClipPlayable.SetSpeed(0);
                         
@@ -335,8 +439,12 @@ namespace AnimationSystem.Character
                 }
                 case CharacterPolearmAnimationState.StrikeEnd:
                 {
+                    _polearmBlendPassedTime += Time.deltaTime;
+                    
                     if (_polearmBlendPassedTime >= strikeEndTime)
                     {
+                        _polearmBlendPassedTime = 0;
+                        
                         ChangePolearmState(CharacterPolearmAnimationState.StrikeToIdle);
                     }
                     
@@ -344,17 +452,38 @@ namespace AnimationSystem.Character
                 }
                 case CharacterPolearmAnimationState.StrikeToIdle:
                 {
-                    var deltaWeight = Mathf.Clamp01(_polearmBlendPassedTime / swingToIdleBlendTime);
+                    var deltaWeight = Mathf.Clamp01(_polearmBlendPassedTime / strikeToIdleBlendTime);
 
                     SetPolearmAnimationWeights(deltaWeight, 0, 1f - deltaWeight);
-                    SetPolearmJobHitTargetWeight(_polearmStrikePassedTime / swingToIdleBlendTime);
+                    SetPolearmJobHitTargetWeight(_polearmStrikePassedTime / strikeToIdleBlendTime);
                     
                     _polearmStrikePassedTime -= Time.deltaTime;
+                    _polearmBlendPassedTime += Time.deltaTime;
                     
                     if (deltaWeight >= 1f)
                     {
+                        _polearmBlendPassedTime = 0;
                         _polearmIdleClipPlayable.SetSpeed(1);
+                        
                         SetPolearmJobHitTargetWeight(0);
+                        
+                        ChangePolearmState(CharacterPolearmAnimationState.Idle);
+                    }
+                    
+                    break;
+                }
+                case CharacterPolearmAnimationState.SwingToIdle:
+                {
+                    var deltaWeight = Mathf.Clamp01(_polearmBlendPassedTime / swingToIdleBlendTime);
+
+                    SetPolearmAnimationWeights(deltaWeight, 1f - deltaWeight, 0);
+                    
+                    _polearmBlendPassedTime += Time.deltaTime;
+
+                    if (deltaWeight >= 1)
+                    {
+                        _polearmBlendPassedTime = 0;
+                        _polearmIdleClipPlayable.SetSpeed(1);
                         
                         ChangePolearmState(CharacterPolearmAnimationState.Idle);
                     }
@@ -364,22 +493,32 @@ namespace AnimationSystem.Character
             }
 
             _polearmPassedTime += Time.deltaTime;
-            _polearmBlendPassedTime += Time.deltaTime;
         }
         private void UpdateLocomotionAnimation()
         {
-            switch (locomotionAnimationState)
+            switch (_locomotionAnimationState)
             {
                 case CharacterLocomotionAnimationState.Idle:
                 {
                     return;
                 }
-                case CharacterLocomotionAnimationState.StepForward:
+                case CharacterLocomotionAnimationState.StepForwardRight:
                 {
-                    var deltaWeight = Mathf.Clamp01(_locomotionBlendPassedTime / locomotionStepForwardClip.length);
+                    var deltaWeight = Mathf.Clamp01(_locomotionBlendPassedTime / _locomotionStepForwardLeftClipPlayable.GetAnimationClip().length);
                     var sinWeight = Mathf.Sin(deltaWeight * Mathf.PI + Mathf.PI);
 
-                    SetLocomotionAnimationWeights(1 - deltaWeight, deltaWeight);
+                    SetLocomotionAnimationWeights(0, 1, CharacterLocomotionAnimationState.StepForwardRight);
+                    SetLocomotionJobStepWeight(deltaWeight);
+                    SetFootIKWeight(sinWeight);
+                    
+                    break;
+                }
+                case CharacterLocomotionAnimationState.StepBackwardLeft:
+                {
+                    var deltaWeight = Mathf.Clamp01(_locomotionBlendPassedTime / _locomotionStepBackwardLeftClipPlayable.GetAnimationClip().length);
+                    var sinWeight = Mathf.Sin(deltaWeight * Mathf.PI + Mathf.PI);
+
+                    SetLocomotionAnimationWeights(0, 1, CharacterLocomotionAnimationState.StepBackwardLeft);
                     SetLocomotionJobStepWeight(deltaWeight);
                     SetFootIKWeight(sinWeight);
                     
@@ -387,15 +526,18 @@ namespace AnimationSystem.Character
                 }
                 case CharacterLocomotionAnimationState.StepToIdle:
                 {
-                    var deltaWeight = 1 - Mathf.Clamp01(_locomotionBlendPassedTime / locomotionStepForwardClip.length);
+                    var stepInfo = GetStepToIdleInfo();
+                    var deltaWeight = 1 - Mathf.Clamp01(_locomotionBlendPassedTime / stepInfo.clipPlayable.GetAnimationClip().length);
                     var sinWeight = Mathf.Sin(deltaWeight * Mathf.PI + Mathf.PI);
                     
-                    SetLocomotionAnimationWeights(1 - deltaWeight, deltaWeight);
+                    SetLocomotionAnimationWeights(0, 1, stepInfo.stepType);
                     SetLocomotionJobStepWeight(deltaWeight);
                     SetFootIKWeight(sinWeight);
                     
                     if (deltaWeight <= 0)
                     {
+                        _steps = 0;
+                        
                         SetLocomotionJobStepWeight(0);
                         
                         ChangeLocomotionState(CharacterLocomotionAnimationState.Idle);
@@ -416,12 +558,12 @@ namespace AnimationSystem.Character
             var output = AnimationPlayableOutput.Create(_samplerGraph, "Sampler Animation Output", samplerAnimator);
             
             _sampleLocomotionIdleClipPlayable = AnimationClipPlayable.Create(_samplerGraph, locomotionIdleClip);
-            _sampleLocomotionStepClipPlayable = AnimationClipPlayable.Create(_samplerGraph, locomotionStepForwardClip);
+            _sampleLocomotionStepClipPlayable = AnimationClipPlayable.Create(_samplerGraph, locomotionStepForwardRightClip);
             _samplePolearmIdleClipPlayable = AnimationClipPlayable.Create(_samplerGraph, polearmIdleClip);
             _samplePolearmStrikeClipPlayable = AnimationClipPlayable.Create(_samplerGraph, polearmSwingStrikePair.StrikeAnimation);
             
-            _samplePolearmStrikeClipPlayable.SetTime(polearmSwingStrikePair.StrikeLength);
-            _sampleLocomotionStepClipPlayable.SetTime(locomotionStepForwardClip.length);
+            _samplePolearmStrikeClipPlayable.SetTime(0);
+            _sampleLocomotionStepClipPlayable.SetTime(0);
             
             _sampleLocomotionIdleClipPlayable.SetApplyFootIK(false);
             _sampleLocomotionStepClipPlayable.SetApplyFootIK(false);
@@ -447,6 +589,8 @@ namespace AnimationSystem.Character
 
             _samplerGraph.Play();
             _samplerGraph.Evaluate(0);
+
+            _defaultSamplerPosition = samplerAnimator.gameObject.transform.position;
         }
         private void CreateGraph()
         {
@@ -454,31 +598,43 @@ namespace AnimationSystem.Character
             _graph.SetTimeUpdateMode(DirectorUpdateMode.GameTime);
             _mixer = AnimationLayerMixerPlayable.Create(_graph, 2);
             _polearmMixer = AnimationMixerPlayable.Create(_graph, 3);
-            _locomotionMixer = AnimationMixerPlayable.Create(_graph, 2);
+            _locomotionMixer = AnimationMixerPlayable.Create(_graph, 5);
             var output = AnimationPlayableOutput.Create(_graph, "Animation Output", animator);
             
             _locomotionIdleClipPlayable = AnimationClipPlayable.Create(_graph, locomotionIdleClip);
-            _locomotionStepForwardClipPlayable = AnimationClipPlayable.Create(_graph, locomotionStepForwardClip);
+            _locomotionStepForwardRightClipPlayable = AnimationClipPlayable.Create(_graph, locomotionStepForwardRightClip);
+            _locomotionStepForwardLeftClipPlayable = AnimationClipPlayable.Create(_graph, locomotionStepForwardLeftClip);
+            _locomotionStepBackwardRightClipPlayable = AnimationClipPlayable.Create(_graph, locomotionStepBackwardRightClip);
+            _locomotionStepBackwardLeftClipPlayable = AnimationClipPlayable.Create(_graph, locomotionStepBackwardLeftClip);
             
             _polearmIdleClipPlayable = AnimationClipPlayable.Create(_graph, polearmIdleClip);
             _polearmSwingClipPlayable = AnimationClipPlayable.Create(_graph, polearmSwingStrikePair.SwingAnimation);
             _polearmStrikeClipPlayable = AnimationClipPlayable.Create(_graph, polearmSwingStrikePair.StrikeAnimation);
             
             _locomotionIdleClipPlayable.SetApplyFootIK(false);
-            _locomotionStepForwardClipPlayable.SetApplyFootIK(false);
+            _locomotionStepForwardRightClipPlayable.SetApplyFootIK(false);
+            _locomotionStepForwardLeftClipPlayable.SetApplyFootIK(false);
+            _locomotionStepBackwardRightClipPlayable.SetApplyFootIK(false);
+            _locomotionStepBackwardLeftClipPlayable.SetApplyFootIK(false);
             _polearmIdleClipPlayable.SetApplyFootIK(false);
             _polearmSwingClipPlayable.SetApplyFootIK(false);
             _polearmStrikeClipPlayable.SetApplyFootIK(false);
 
             _graph.Connect(_locomotionIdleClipPlayable, 0, _locomotionMixer, LOCOMOTION_IDLE_ANIMATION_INDEX);
-            _graph.Connect(_locomotionStepForwardClipPlayable, 0, _locomotionMixer, LOCOMOTION_STEP_FORWARD_ANIMATION_INDEX);
+            _graph.Connect(_locomotionStepForwardRightClipPlayable, 0, _locomotionMixer, LOCOMOTION_STEP_FORWARD_RIGHT_ANIMATION_INDEX);
+            _graph.Connect(_locomotionStepForwardLeftClipPlayable, 0, _locomotionMixer, LOCOMOTION_STEP_FORWARD_LEFT_ANIMATION_INDEX);
+            _graph.Connect(_locomotionStepBackwardRightClipPlayable, 0, _locomotionMixer, LOCOMOTION_STEP_BACKWARD_RIGHT_ANIMATION_INDEX);
+            _graph.Connect(_locomotionStepBackwardLeftClipPlayable, 0, _locomotionMixer, LOCOMOTION_STEP_BACKWARD_LEFT_ANIMATION_INDEX);
             
             _graph.Connect(_polearmIdleClipPlayable, 0, _polearmMixer, POLEARM_IDLE_ANIMATION_INDEX);
             _graph.Connect(_polearmSwingClipPlayable, 0, _polearmMixer, POLEARM_SWING_ANIMATION_INDEX);
             _graph.Connect(_polearmStrikeClipPlayable, 0, _polearmMixer, POLEARM_STRIKE_ANIMATION_INDEX);
             
             _locomotionMixer.SetInputWeight(LOCOMOTION_IDLE_ANIMATION_INDEX, 1f);
-            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_FORWARD_ANIMATION_INDEX, 0f);
+            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_FORWARD_RIGHT_ANIMATION_INDEX, 0f);
+            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_FORWARD_LEFT_ANIMATION_INDEX, 0f);
+            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_BACKWARD_RIGHT_ANIMATION_INDEX, 0f);
+            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_BACKWARD_LEFT_ANIMATION_INDEX, 0f);
             
             _polearmMixer.SetInputWeight(POLEARM_IDLE_ANIMATION_INDEX, 1f);
             _polearmMixer.SetInputWeight(POLEARM_SWING_ANIMATION_INDEX, 0f);
@@ -537,8 +693,10 @@ namespace AnimationSystem.Character
         }
         private void CreateLocomotionJob()
         {
-            var startPosition = samplerRightFootBone.position;
-            var rotation = samplerRightFootBone.rotation;
+            var rightFootStartPosition = samplerRightFootBone.position;
+            var leftFootStartPosition = samplerLeftFootBone.position;
+            var rightFootRotation = samplerRightFootBone.rotation;
+            var leftFootRotation = samplerLeftFootBone.rotation;
             
             var config = new LocomotionAnimationJobConfig
             {
@@ -549,21 +707,23 @@ namespace AnimationSystem.Character
             {
                 Config = config,
 
-                FootRotation = rotation,
-                FootStartPosition = startPosition,
-                RightFootTarget = animator.BindStreamTransform(rightFootTarget)
+                RightFootRotation = rightFootRotation,
+                LeftFootRotation = leftFootRotation,
+                RightFootStartPosition = rightFootStartPosition,
+                LeftFootStartPosition = leftFootStartPosition,
+                RightFootTarget = animator.BindStreamTransform(rightFootTarget),
+                LeftFootTarget = animator.BindStreamTransform(leftFootTarget)
             };
         }
 
         private void ChangePolearmState(CharacterPolearmAnimationState newState)
         {
-            _polearmBlendPassedTime = 0;
-            polearmAnimationState = newState;
+            _polearmAnimationState = newState;
         }
         private void ChangeLocomotionState(CharacterLocomotionAnimationState newState)
         {
             _locomotionBlendPassedTime = 0;
-            locomotionAnimationState = newState;
+            _locomotionAnimationState = newState;
         }
         
         private void SetPolearmAnimationWeights(float idle, float swing, float strike)
@@ -585,17 +745,45 @@ namespace AnimationSystem.Character
             job.HandWeaponWeight = Mathf.Clamp01(handWeight);
             _polearmAnimationPlayable.SetJobData(job);
         }
-        
-        private void SetLocomotionAnimationWeights(float idle, float stepForward)
+
+        private void SetLocomotionAnimationWeights(float idle, float step, CharacterLocomotionAnimationState stepType)
         {
             _locomotionMixer.SetInputWeight(LOCOMOTION_IDLE_ANIMATION_INDEX, idle);
-            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_FORWARD_ANIMATION_INDEX, stepForward);
+            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_FORWARD_RIGHT_ANIMATION_INDEX, stepType == CharacterLocomotionAnimationState.StepForwardRight ? step : 0);
+            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_FORWARD_LEFT_ANIMATION_INDEX, stepType == CharacterLocomotionAnimationState.StepForwardLeft ? step : 0);
+            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_BACKWARD_RIGHT_ANIMATION_INDEX, stepType == CharacterLocomotionAnimationState.StepBackwardRight ? step : 0);
+            _locomotionMixer.SetInputWeight(LOCOMOTION_STEP_BACKWARD_LEFT_ANIMATION_INDEX, stepType == CharacterLocomotionAnimationState.StepBackwardLeft ? step : 0);
         }
         private void SetLocomotionJobStepWeight(float stepWeight)
         {
             var job = _locomotionAnimationPlayable.GetJobData<LocomotionAnimationJob>();
-            job.StepWeight = Mathf.Clamp01(stepWeight);
+            
+            if (_isCurrentFootRight)
+            {
+                job.RightFootStepWeight = Mathf.Clamp01(stepWeight);
+            }
+            else
+            {
+                job.LeftFootStepWeight = Mathf.Clamp01(stepWeight);
+            }
+            
             _locomotionAnimationPlayable.SetJobData(job);
+        }
+        
+        private (AnimationClipPlayable clipPlayable, CharacterLocomotionAnimationState stepType) GetStepToIdleInfo()
+        {
+            if (_steps > 0)
+            {
+                return _steps % 2 == 1 ?
+                    (_locomotionStepBackwardRightClipPlayable, CharacterLocomotionAnimationState.StepBackwardRight) :
+                    (_locomotionStepBackwardLeftClipPlayable, CharacterLocomotionAnimationState.StepBackwardLeft);
+            }
+            else
+            {
+                return _steps % 2 == -1 ?
+                    (_locomotionStepForwardLeftClipPlayable, CharacterLocomotionAnimationState.StepForwardLeft) :
+                    (_locomotionStepForwardRightClipPlayable, CharacterLocomotionAnimationState.StepForwardRight);
+            }
         }
         
         private void SetFootIKWeight(float weight)
@@ -604,14 +792,35 @@ namespace AnimationSystem.Character
         }
         private void SampleStrikeEnd(bool useStep, out Vector3 weaponPos, out Quaternion weaponRot)
         {
+            ResetSampler();
+            
+            var time = Mathf.Max(
+                _samplePolearmStrikeClipPlayable.GetAnimationClip().length,
+                _sampleLocomotionStepClipPlayable.GetAnimationClip().length);
+            
             _sampleMixer.SetInputWeight(0, useStep ? 0 : 1);
             _sampleMixer.SetInputWeight(1, useStep ? 1 : 0);
             _sampleMixer.SetInputWeight(2, 0);
             _sampleMixer.SetInputWeight(3, 1);
-            _samplerGraph.Evaluate(0);
+            _sampleMixer.SetSpeed(1);
+            _samplerGraph.Evaluate(time);
 
             weaponPos = samplerWeaponBone.position;
             weaponRot = samplerWeaponBone.rotation;
+        }
+        
+        private void ResetSampler()
+        {
+            samplerAnimator.gameObject.transform.position = _defaultSamplerPosition;
+            _samplePolearmStrikeClipPlayable.SetTime(0);
+            _sampleLocomotionStepClipPlayable.SetTime(0);
+            
+            _sampleMixer.SetInputWeight(0, 1);
+            _sampleMixer.SetInputWeight(1, 0);
+            _sampleMixer.SetInputWeight(2, 1);
+            _sampleMixer.SetInputWeight(3, 0);
+            _sampleMixer.SetSpeed(1);
+            _samplerGraph.Evaluate(0);
         }
 
         public void ManualDestroy()

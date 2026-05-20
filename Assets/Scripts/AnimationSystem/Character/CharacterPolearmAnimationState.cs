@@ -9,6 +9,8 @@
         SwingToStrike,
         Strike,
         StrikeEnd,
-        StrikeToIdle
+        StrikeToIdle,
+        
+        SwingToIdle,
     }
 }

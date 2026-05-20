@@ -3,7 +3,10 @@
     public enum CharacterLocomotionAnimationState
     {
         Idle,
-        StepForward,
+        StepForwardRight,
+        StepForwardLeft,
+        StepBackwardRight,
+        StepBackwardLeft,
         StepToIdle,
     }
 }
